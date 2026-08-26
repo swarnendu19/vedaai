@@ -49,11 +49,47 @@ function mistralBlockPolygon(block: JsonRecord, width: number, height: number) {
   const bbox = block.bbox;
   if (Array.isArray(bbox)) return normalizePolygon(bbox.map(Number), width, height);
   const box = asRecord(bbox);
-  const x0 = asNumber(box.x_min ?? box.x0 ?? box.left);
-  const y0 = asNumber(box.y_min ?? box.y0 ?? box.top);
-  const x1 = asNumber(box.x_max ?? box.x1 ?? box.right);
-  const y1 = asNumber(box.y_max ?? box.y1 ?? box.bottom);
+  const x0 = asNumber(block.top_left_x ?? box.x_min ?? box.x0 ?? box.left);
+  const y0 = asNumber(block.top_left_y ?? box.y_min ?? box.y0 ?? box.top);
+  const x1 = asNumber(block.bottom_right_x ?? box.x_max ?? box.x1 ?? box.right);
+  const y1 = asNumber(block.bottom_right_y ?? box.y_max ?? box.y1 ?? box.bottom);
   return normalizePolygon([x0, y0, x1, y0, x1, y1, x0, y1], width, height);
+}
+
+function mistralBlockConfidence(block: JsonRecord) {
+  const scores = asRecord(block.confidence_scores);
+  return textConfidence(
+    scores.average_content_confidence_score ??
+      scores.minimum_content_confidence_score ??
+      block.confidence,
+    0.82,
+  );
+}
+
+function cleanMarkdownLine(line: string) {
+  return line
+    .replace(/^\s*(?:#{1,6}|>|[-*+]\s+)\s*/, '')
+    .replace(/\*\*|__|`/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function likelyNumberedLine(text: string) {
+  return /^\s*(?:(?:q(?:uestion)?|ans(?:wer)?)\.?\s*)?(?:\d{1,3}|\([a-z]\)|\((?:i{1,3}|iv|v|vi{0,3}|ix|x)\))\s*[.):-]?/i.test(text);
+}
+
+function comparableText(text: string) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function overlapScore(left: string, right: string) {
+  const a = new Set(comparableText(left).split(' ').filter(Boolean));
+  const b = new Set(comparableText(right).split(' ').filter(Boolean));
+  if (!a.size || !b.size) return 0;
+  let overlap = 0;
+  for (const token of a) if (b.has(token)) overlap += 1;
+  return overlap / Math.max(a.size, b.size);
 }
 
 export async function runMistralOCR(document: UploadedDocument): Promise<OCRPage[]> {
@@ -84,15 +120,34 @@ export async function runMistralOCR(document: UploadedDocument): Promise<OCRPage
     const rawBlocks = asArray(page.blocks);
     const markdownLines = asString(page.markdown)
       .split(/\r?\n/)
-      .map((line) => line.replace(/^\s*#+\s*/, '').trim())
-      .filter(Boolean);
-    const blocks = rawBlocks.length ? rawBlocks : markdownLines.map((content) => ({ content }));
-    const lines: OCRLine[] = blocks.map((blockValue, blockIndex) => {
+      .map(cleanMarkdownLine)
+      .filter((line) => line && !/^!\[.*\]\(.+\)$/.test(line));
+    const blockLines: OCRLine[] = rawBlocks.flatMap((blockValue, blockIndex) => {
       const block = asRecord(blockValue);
-      const text = asString(block.content ?? block.text ?? block.markdown).trim();
-      const confidence = textConfidence(block.confidence, rawBlocks.length ? 0.82 : 0.55);
-      const id = `mistral-p${pageIndex + 1}-l${blockIndex + 1}`;
+      const content = asString(block.content ?? block.text ?? block.markdown).trim();
+      const confidence = mistralBlockConfidence(block);
       const polygon = mistralBlockPolygon(block, width, height);
+      return content.split(/\r?\n/).map(cleanMarkdownLine).filter(Boolean).map((text, lineIndex) => {
+        const id = `mistral-p${pageIndex + 1}-b${blockIndex + 1}-l${lineIndex + 1}`;
+        return {
+          id,
+          page: pageIndex + 1,
+          text,
+          words: wordsForLine('mistral', pageIndex + 1, id, text, polygon, confidence),
+          polygon,
+          confidence,
+          provider: 'mistral' as const,
+        };
+      });
+    });
+    const markdownOCRLines: OCRLine[] = markdownLines.map((text, lineIndex) => {
+      const bestBlock = blockLines
+        .map((line) => ({ line, score: overlapScore(text, line.text) }))
+        .sort((a, b) => b.score - a.score)[0];
+      const source = bestBlock?.score >= 0.45 ? bestBlock.line : undefined;
+      const id = `mistral-p${pageIndex + 1}-md${lineIndex + 1}`;
+      const polygon = source?.polygon ?? [];
+      const confidence = source?.confidence ?? 0.65;
       return {
         id,
         page: pageIndex + 1,
@@ -102,7 +157,10 @@ export async function runMistralOCR(document: UploadedDocument): Promise<OCRPage
         confidence,
         provider: 'mistral' as const,
       };
-    }).filter((line) => line.text);
+    });
+    const blockAnchorCount = blockLines.filter((line) => likelyNumberedLine(line.text)).length;
+    const markdownAnchorCount = markdownOCRLines.filter((line) => likelyNumberedLine(line.text)).length;
+    const lines = markdownAnchorCount > blockAnchorCount || !blockLines.length ? markdownOCRLines : blockLines;
     return { page: pageIndex + 1, width, height, lines, provider: 'mistral' };
   });
 }

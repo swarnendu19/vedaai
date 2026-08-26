@@ -34,3 +34,11 @@ test('preserves original paper order across pages', () => {
   assert.deepEqual(questions.map((question) => question.normalizedNumber), ['1', '2', '3']);
 });
 
+test('accepts Mistral markdown and Question No. prefixes', () => {
+  const questions = extractQuestionsFromLines([
+    line('1', '### **Question No. 1.** Which vessel carries blood away from the heart?', 1, 0.1),
+    line('2', '- **Q. 2)** Name the organelle responsible for photosynthesis. [2]', 1, 0.2),
+  ]);
+  assert.deepEqual(questions.map((question) => question.normalizedNumber), ['1', '2']);
+  assert.equal(questions[1].marks, 2);
+});

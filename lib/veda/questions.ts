@@ -1,6 +1,6 @@
 import type { OCRLine, Question } from './types';
 
-const MAIN_NUMBER = /^\s*(?:(?:q(?:uestion)?|ans(?:wer)?)\.?\s*)?(\d{1,3})(?:\s*(?:\(\s*([a-z])\s*\)|-\s*([a-z])\b|([a-z])(?=\s*(?:[.):-]|\(|$))))?(?:\s*\(\s*((?:i{1,3}|iv|v|vi{0,3}|ix|x))\s*\))?\s*[.):-]?\s*(.*)$/i;
+const MAIN_NUMBER = /^\s*(?:(?:q(?:uestion)?\.?\s*(?:(?:no|number)\.?\s*)?|ans(?:wer)?\.?\s*))?(\d{1,3})(?:\s*(?:\(\s*([a-z])\s*\)|-\s*([a-z])\b|([a-z])(?=\s*(?:[.):-]|\(|$))))?(?:\s*\(\s*((?:i{1,3}|iv|v|vi{0,3}|ix|x))\s*\))?\s*[.):-]?\s*(.*)$/i;
 const LETTER_ONLY = /^\s*\(?\s*([a-z])\s*\)\s*[.):-]?\s*(.*)$/i;
 const ROMAN_ONLY = /^\s*\(?\s*((?:i{1,3}|iv|v|vi{0,3}|ix|x))\s*\)\s*[.):-]?\s*(.*)$/i;
 
@@ -54,7 +54,11 @@ export function extractQuestionsFromLines(lines: OCRLine[]): Question[] {
   };
 
   for (const line of ordered) {
-    const text = line.text.replace(/^#+\s*/, '').replace(/\*+/g, '').trim();
+    const text = line.text
+      .replace(/^\s*(?:#{1,6}|>|[-*+]\s+)\s*/, '')
+      .replace(/\*\*|__|`/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!text) continue;
     const main = text.match(MAIN_NUMBER);
     if (main) {

@@ -69,8 +69,19 @@ export async function processSession(session: ProcessingSession, emit: ProgressE
   const questionOCR = await runProviders(session.questionPaper, session.questionPaper.mimeType !== 'application/pdf');
   const questionPages = questionOCR.pages.find((pages) => pages[0]?.provider === 'mistral') ?? buildOCRConsensus(questionOCR.pages);
   await progress(emit, 3);
-  const questions = extractQuestionsFromLines(questionPages.flatMap((page) => page.lines));
-  if (!questions.length) throw new Error('No reliable question structure was detected. Review the scan or configure Mistral OCR.');
+  const questionLines = questionPages.flatMap((page) => page.lines);
+  const questions = extractQuestionsFromLines(questionLines);
+  console.info('[veda-processing]', JSON.stringify({
+    sessionId: session.id,
+    event: 'question_extraction_complete',
+    provider: questionPages[0]?.provider ?? 'none',
+    pages: questionPages.length,
+    ocrLines: questionLines.length,
+    questions: questions.length,
+  }));
+  if (!questions.length) {
+    throw new Error(`Mistral read ${questionPages.length} page(s) and ${questionLines.length} text line(s), but no supported question numbering was found. Use labels such as 1., Q1, or Question 1, or review the OCR debug output.`);
+  }
 
   await progress(emit, 4, `${questions.length} questions found`);
   const answerOCR = await runProviders(session.answerSheet, session.answerSheet.mimeType !== 'application/pdf');
