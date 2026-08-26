@@ -1,0 +1,24 @@
+{
+  "requiredCases": [
+    "normal_order",
+    "out_of_order",
+    "question_skipped",
+    "subquestion_skipped",
+    "wrong_question_number",
+    "missing_question_number",
+    "multi_page_continuation",
+    "two_answers_same_page",
+    "diagram_heavy",
+    "equation_heavy",
+    "crossed_out_answer",
+    "rewritten_answer",
+    "unknown_extra_response",
+    "rotated_bad_scan",
+    "perspective_photo",
+    "light_handwriting",
+    "dense_handwriting",
+    "nested_number_11_a_i",
+    "ocr_confusions_1_7_5_s_0_o"
+  ]
+}
+
