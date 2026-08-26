@@ -1,6 +1,6 @@
 # VedaAI Answer Mapping
 
-Accuracy-first teacher review software built from the supplied Figma. The application accepts a question paper and handwritten answer sheet, runs observable OCR/mapping stages on the Next.js backend, and renders normalized OCR polygons as SVG highlights over the original document.
+Accuracy-first teacher review software built from the supplied Figma. This is a standard Next.js application: it accepts a question paper and handwritten answer sheet, runs observable OCR/mapping stages in Next.js route handlers, and renders normalized OCR polygons as SVG highlights over the original document.
 
 ## Run locally
 
@@ -8,7 +8,7 @@ Accuracy-first teacher review software built from the supplied Figma. The applic
 npm run dev
 ```
 
-Open `http://localhost:3000`. The **audited demo** exercises the complete workflow without API credentials. Real document processing requires at least one OCR provider in `.env.local`; copy `.env.example` and add server-side credentials.
+Open `http://localhost:3000`. The **audited demo** exercises the complete workflow without API credentials. Real document processing requires at least one OCR provider in `.env.local`; copy `.env.example` and add server-side credentials. No platform-specific hosting runtime is required.
 
 ```bash
 npm test
@@ -65,4 +65,3 @@ Append `?debug=true` to the app and results endpoint to expose mapping confidenc
 - OpenAI grading uses strict JSON schema output and `store: false`.
 
 Do not commit `.env.local` or provider credentials.
-
