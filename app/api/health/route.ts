@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 export function GET() {
   return Response.json({
     status: 'ok',
+    processingTransport: 'single-request-sse',
     providers: configuredProviderNames(),
     timestamp: new Date().toISOString(),
   }, {

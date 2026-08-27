@@ -7,6 +7,13 @@ function countPdfPages(bytes: Uint8Array) {
   return Math.max(1, matches?.length ?? 1);
 }
 
+export function matchesMimeSignature(bytes: Uint8Array, mimeType: string) {
+  if (mimeType === 'application/pdf') return bytes.length >= 5 && new TextDecoder('latin1').decode(bytes.subarray(0, 5)) === '%PDF-';
+  if (mimeType === 'image/png') return bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
+  if (mimeType === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  return false;
+}
+
 export async function uploadedDocumentFromFile(file: File): Promise<UploadedDocument> {
   const mimeType = file.type.toLowerCase();
   if (!ALLOWED_MIME_TYPES.has(mimeType)) {
@@ -16,6 +23,7 @@ export async function uploadedDocumentFromFile(file: File): Promise<UploadedDocu
     throw new Error('Files must be between 1 byte and 10 MB.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
+  if (!matchesMimeSignature(bytes, mimeType)) throw new Error('The file contents do not match the selected PDF, JPG, or PNG format.');
   return {
     name: file.name.replace(/[\\/]/g, '_'),
     mimeType,

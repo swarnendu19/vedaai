@@ -1,4 +1,5 @@
 import type { AnswerCandidate, Grading, Question } from './types';
+import { fetchProvider, providerFailureMessage } from './provider-errors';
 
 function outputText(payload: unknown) {
   const record = payload as { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> };
@@ -9,7 +10,7 @@ function outputText(payload: unknown) {
 export async function gradeAnswer(question: Question, answer: AnswerCandidate): Promise<Grading | undefined> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || !question.marks) return undefined;
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetchProvider('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -39,7 +40,6 @@ export async function gradeAnswer(question: Question, answer: AnswerCandidate): 
       },
     }),
   });
-  if (!response.ok) throw new Error(`Grading provider failed (${response.status}).`);
+  if (!response.ok) throw new Error(providerFailureMessage('AI grading', response.status));
   return JSON.parse(outputText(await response.json())) as Grading;
 }
-

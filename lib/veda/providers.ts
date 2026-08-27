@@ -1,4 +1,5 @@
 import { bytesToArrayBuffer, bytesToDataUrl, normalizePolygon, polygonIoU } from './documents';
+import { fetchProvider, providerFailureMessage } from './provider-errors';
 import type { OCRLine, OCRPage, OCRWord, ProviderName, UploadedDocument } from './types';
 
 type JsonRecord = Record<string, unknown>;
@@ -95,7 +96,7 @@ function overlapScore(left: string, right: string) {
 export async function runMistralOCR(document: UploadedDocument): Promise<OCRPage[]> {
   const apiKey = process.env.MISTRAL_API_KEY;
   if (!apiKey) throw new Error('MISTRAL_API_KEY is not configured.');
-  const response = await fetch('https://api.mistral.ai/v1/ocr', {
+  const response = await fetchProvider('https://api.mistral.ai/v1/ocr', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -110,7 +111,7 @@ export async function runMistralOCR(document: UploadedDocument): Promise<OCRPage
       extract_footer: false,
     }),
   });
-  if (!response.ok) throw new Error(`Mistral OCR failed (${response.status}).`);
+  if (!response.ok) throw new Error(providerFailureMessage('Mistral OCR', response.status));
   const payload = asRecord(await response.json());
   return asArray(payload.pages).map((pageValue, pageIndex) => {
     const page = asRecord(pageValue);
@@ -170,20 +171,20 @@ export async function runAzureOCR(document: UploadedDocument): Promise<OCRPage[]
   const apiKey = process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY;
   if (!endpoint || !apiKey) throw new Error('Azure Document Intelligence is not configured.');
   const analyzeUrl = `${endpoint}/documentintelligence/documentModels/prebuilt-read:analyze?_overload=analyzeDocument&api-version=2024-11-30&features=ocr.highResolution`;
-  const analyze = await fetch(analyzeUrl, {
+  const analyze = await fetchProvider(analyzeUrl, {
     method: 'POST',
     headers: { 'Ocp-Apim-Subscription-Key': apiKey, 'Content-Type': document.mimeType },
     body: bytesToArrayBuffer(document.bytes),
   });
-  if (!analyze.ok) throw new Error(`Azure OCR submission failed (${analyze.status}).`);
+  if (!analyze.ok) throw new Error(providerFailureMessage('Azure Document Intelligence', analyze.status));
   const operationUrl = analyze.headers.get('operation-location');
   if (!operationUrl) throw new Error('Azure OCR did not return an operation URL.');
 
   let result: JsonRecord = {};
   for (let attempt = 0; attempt < 90; attempt += 1) {
     if (attempt) await new Promise((resolve) => setTimeout(resolve, 1000));
-    const poll = await fetch(operationUrl, { headers: { 'Ocp-Apim-Subscription-Key': apiKey } });
-    if (!poll.ok) throw new Error(`Azure OCR polling failed (${poll.status}).`);
+    const poll = await fetchProvider(operationUrl, { headers: { 'Ocp-Apim-Subscription-Key': apiKey } }, 2);
+    if (!poll.ok) throw new Error(providerFailureMessage('Azure Document Intelligence', poll.status));
     result = asRecord(await poll.json());
     const status = asString(result.status).toLowerCase();
     if (status === 'succeeded') break;
@@ -238,7 +239,7 @@ export async function runGoogleOCR(document: UploadedDocument): Promise<OCRPage[
   }
   const dataUrl = bytesToDataUrl(document);
   const content = dataUrl.slice(dataUrl.indexOf(',') + 1);
-  const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`, {
+  const response = await fetchProvider(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -249,7 +250,7 @@ export async function runGoogleOCR(document: UploadedDocument): Promise<OCRPage[
       }],
     }),
   });
-  if (!response.ok) throw new Error(`Google Vision OCR failed (${response.status}).`);
+  if (!response.ok) throw new Error(providerFailureMessage('Google Cloud Vision', response.status));
   const payload = asRecord(await response.json());
   const annotation = asRecord(asRecord(asArray(payload.responses)[0]).fullTextAnnotation);
   const pages = asArray(annotation.pages);

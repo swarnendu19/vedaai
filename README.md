@@ -116,7 +116,9 @@ Use `GET /api/health` as the container health check. It reports service health a
 
 ### Runtime requirement
 
-Uploads, document bytes, results, and progress are intentionally stored in process memory and expire after two hours. Run this version as one long-lived Node.js instance with a single replica and avoid serverless functions that may route consecutive requests to different instances. For horizontal scaling, replace `lib/veda/session-store.ts` with shared session storage and move uploaded documents to object storage before increasing the replica count.
+The browser submits both documents to the processing route in one multipart request and receives progress plus the completed typed result over the same SSE response. The review viewer uses browser-local object URLs for the original documents. This keeps the primary upload → OCR → results workflow safe on serverless platforms because it never expects a later request to reach the same process instance. The older session upload/results endpoints remain available for long-lived single-instance deployments and API compatibility.
+
+Each file is validated independently up to 10 MB. A hosting platform may impose a smaller request-ingress limit on the combined multipart request; an HTTP 413 is converted into an actionable message in the UI. For guaranteed 10 MB + 10 MB uploads, deploy the included standalone container or place direct-to-object-storage uploads in front of the processing route.
 
 The runtime must allow outbound HTTPS access to every configured OCR or grading provider. Reverse proxies should disable response buffering for the processing endpoint so SSE progress events reach the browser immediately.
 
@@ -124,10 +126,11 @@ The runtime must allow outbound HTTPS access to every configured OCR or grading 
 
 - One provider may fail while the pipeline continues with successful providers; the failure is returned as a review warning.
 - If every configured OCR provider fails, processing stops with an actionable error.
+- Provider authentication, credit exhaustion, rate limits, oversized documents, and temporary outages are translated into actionable UI messages. Retryable 408/429/5xx responses use bounded backoff before failing.
 - If no supported question numbering is detected, the pipeline stops rather than inventing question structure.
 - Uncertain mappings remain explicitly reviewable and can be manually reassigned through the mapping endpoint.
 - Grading failures do not discard successful OCR or mappings.
 
 ## Tests
 
-The current test suite covers question-number normalization, hierarchical subquestion extraction, source-order preservation, and Mistral markdown parsing. Production validation also includes ESLint, TypeScript checking, a standalone Next.js build, and a health-endpoint smoke test.
+The automated suite covers MIME signature validation, provider quota/error messaging, question-number normalization, hierarchical subquestion extraction, source-order preservation, Mistral markdown parsing, out-of-order answers, skipped questions, unmatched writing, multi-page continuation geometry, and multiple answers on one page. Production validation also includes ESLint, TypeScript checking, a standalone Next.js build, a health check, a full streamed demo integration test, and a live Mistral OCR smoke test.

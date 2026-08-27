@@ -111,25 +111,62 @@ function ResultsScreen({ result, debug, onRestart, onResult }: { result: Process
     text: 'Unmatched student response', page: selectedUnmatched.regions[0]?.page ?? 1,
     sourcePolygons: [], confidence: selectedUnmatched.mappingConfidence, status: 'uncertain', answer: selectedUnmatched,
   } : undefined);
-  const remap = async (answerId: string, questionId: string | null) => { const response = await fetch(`/api/session/${result.sessionId}/mapping`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answerId, questionId }) }); if (response.ok) onResult(await response.json() as ProcessingResult); };
+  const remap = async (answerId: string, questionId: string | null) => onResult(remapResult(result, answerId, questionId));
   return <div className="veda-stage mapping-stage"><Sidebar compact /><Topbar compact /><div className="results-tabs" role="tablist" aria-label="Results view"><button type="button" role="tab" aria-selected={mobilePane === 'questions'} className={mobilePane === 'questions' ? 'active' : ''} onClick={() => setMobilePane('questions')}>Questions</button><button type="button" role="tab" aria-selected={mobilePane === 'answer'} className={mobilePane === 'answer' ? 'active' : ''} onClick={() => setMobilePane('answer')}>Answer Sheet</button></div><main className="mapping-grid" data-mobile-pane={mobilePane}><section className="questions-column"><header><div><strong className="desktop-question-title">Extracted Questions</strong><strong className="mobile-question-title">Extracted Questions (from question paper)</strong><small>{result.metrics.matched} answered • {result.metrics.unanswered} unanswered • {result.metrics.uncertain} review</small></div><button onClick={() => setExpanded(!expanded)}>{expanded ? 'Collapse All' : 'Expand All'}</button></header>{result.warnings.length > 0 && <div className="provider-warning">Processing note: {result.warnings.join(' ')}</div>}<div className="question-stack">{result.questions.map((question) => <QuestionCard key={question.id} question={question} open={expanded || open === question.id} selected={selectedId === question.id} onClick={() => { setOpen(open === question.id ? undefined : question.id); setSelectedId(question.id); setSelectedUnmatchedId(undefined); }} questions={result.questions} onRemap={remap} debug={debug} />)}</div><div className="unmatched-section"><h3>Unmatched responses <span>{result.unmatchedAnswers.length}</span></h3>{result.unmatchedAnswers.length === 0 ? <p>No unmatched writing detected.</p> : result.unmatchedAnswers.map((answer) => <div className={`unmatched-card ${selectedUnmatchedId === answer.id ? 'selected' : ''}`} key={answer.id} onClick={() => { setSelectedId(''); setSelectedUnmatchedId(answer.id); }}><strong>Unknown response • Page {answer.regions[0]?.page ?? '—'}</strong><small>{answer.text || 'Untranscribed writing'}</small><span>Best confidence: {Math.round(answer.mappingConfidence * 100)}%</span><MappingControl answer={answer} questions={result.questions} onRemap={remap} /></div>)}</div></section><DocumentViewer key={selected?.id ?? 'none'} result={result} selected={selected} debug={debug} /></main><button className="restart" onClick={onRestart} aria-label="Restart flow">↻</button></div>;
 }
 
-async function uploadDocument(sessionId: string, kind: FileKind, file: File) { const body = new FormData(); body.append('file', file); const response = await fetch(`/api/session/${sessionId}/${kind}`, { method: 'POST', body }); const payload = await response.json() as { error?: string }; if (!response.ok) throw new Error(payload.error ?? 'Upload failed.'); }
-async function processWithStream(sessionId: string, onProgress: (progress: ProgressEvent) => void) {
-  const response = await fetch(`/api/session/${sessionId}/process`, { method: 'POST' });
-  if (!response.ok || !response.body) { const payload = await response.json() as { error?: string }; throw new Error(payload.error ?? 'Processing could not start.'); }
+function remapResult(source: ProcessingResult, answerId: string, questionId: string | null) {
+  const result = structuredClone(source);
+  const answer = [...result.questions.flatMap((question) => question.answer ? [question.answer] : []), ...result.unmatchedAnswers].find((candidate) => candidate.id === answerId);
+  if (!answer) return source;
+  for (const question of result.questions) {
+    if (question.answer?.id === answer.id) { question.answer = undefined; question.status = 'unanswered'; question.grading = undefined; }
+  }
+  result.unmatchedAnswers = result.unmatchedAnswers.filter((candidate) => candidate.id !== answer.id);
+  const target = questionId ? result.questions.find((question) => question.id === questionId) : undefined;
+  if (target) {
+    if (target.answer && target.answer.id !== answer.id) result.unmatchedAnswers.push({ ...target.answer, status: 'unmatched', mappedQuestionId: undefined });
+    Object.assign(answer, { status: 'matched', mappedQuestionId: target.id, mappingConfidence: 1, mappingMethod: 'teacher_manual_correction' });
+    target.answer = answer; target.status = 'matched'; target.grading = undefined;
+  } else {
+    Object.assign(answer, { status: 'unmatched', mappedQuestionId: undefined, mappingConfidence: 1, mappingMethod: 'teacher_marked_unmatched' });
+    result.unmatchedAnswers.push(answer);
+  }
+  result.metrics = {
+    matched: result.questions.filter((question) => question.status === 'matched').length,
+    unanswered: result.questions.filter((question) => question.status === 'unanswered').length,
+    uncertain: result.questions.filter((question) => question.status === 'uncertain').length,
+    unmatched: result.unmatchedAnswers.length,
+  };
+  return result;
+}
+
+async function responseError(response: Response) {
+  try { return ((await response.json()) as { error?: string }).error ?? 'Processing could not start.'; }
+  catch { return response.status === 413 ? 'The combined upload is too large for the production server. Compress the files and try again.' : `Processing could not start (${response.status}).`; }
+}
+
+async function processWithStream(sessionId: string, onProgress: (progress: ProgressEvent) => void, files?: { questionPaper: File; answerSheet: File }, debug = false) {
+  const body = new FormData();
+  if (files) { body.append('questionPaper', files.questionPaper); body.append('answerSheet', files.answerSheet); }
+  else body.append('demo', 'true');
+  const response = await fetch(`/api/session/${sessionId}/process${debug ? '?debug=true' : ''}`, { method: 'POST', body });
+  if (!response.ok || !response.body) throw new Error(await responseError(response));
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
-  while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const messages = buffer.split('\n\n'); buffer = messages.pop() ?? ''; for (const message of messages) { const event = message.match(/^event:\s*(.+)$/m)?.[1]; const data = message.match(/^data:\s*(.+)$/m)?.[1]; if (!data) continue; const payload = JSON.parse(data) as { error?: string } | ProgressEvent; if (event === 'progress') onProgress(payload as ProgressEvent); if (event === 'error') throw new Error((payload as { error?: string }).error ?? 'Processing failed.'); } }
+  let completed: ProcessingResult | undefined;
+  while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const messages = buffer.split('\n\n'); buffer = messages.pop() ?? ''; for (const message of messages) { const event = message.match(/^event:\s*(.+)$/m)?.[1]; const data = message.match(/^data:\s*(.+)$/m)?.[1]; if (!data) continue; const payload = JSON.parse(data) as { error?: string; result?: ProcessingResult } | ProgressEvent; if (event === 'progress') onProgress(payload as ProgressEvent); if (event === 'complete') completed = (payload as { result?: ProcessingResult }).result; if (event === 'error') throw new Error((payload as { error?: string }).error ?? 'Processing failed.'); } }
+  if (!completed) throw new Error('Processing ended before results were returned. Please try again.');
+  return completed;
 }
 
 const emptyProgress: ProgressEvent = { percent: 0, stage: 'upload_received', label: 'Waiting for files', at: new Date(0).toISOString() };
 
 export default function Home() {
-  const [screen, setScreen] = useState<Screen>('upload'); const [questionFile, setQuestionFile] = useState<File>(); const [answerFile, setAnswerFile] = useState<File>(); const [, setProgress] = useState<ProgressEvent>(emptyProgress); const [result, setResult] = useState<ProcessingResult>(); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [screen, setScreen] = useState<Screen>('upload'); const [questionFile, setQuestionFile] = useState<File>(); const [answerFile, setAnswerFile] = useState<File>(); const [, setProgress] = useState<ProgressEvent>(emptyProgress); const [result, setResult] = useState<ProcessingResult>(); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const documentUrls = useRef<string[]>([]);
   const debug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === 'true';
-  const run = async (demo: boolean) => { setBusy(true); setError(''); setProgress(emptyProgress); setScreen('processing'); try { const created = await fetch(`/api/session${demo ? '?demo=true' : ''}`, { method: 'POST' }); const payload = await created.json() as { session?: { id: string }; error?: string }; if (!created.ok || !payload.session) throw new Error(payload.error ?? 'Could not create a processing session.'); const sessionId = payload.session.id; if (!demo) { if (!questionFile || !answerFile) throw new Error('Choose both files first.'); await uploadDocument(sessionId, 'question-paper', questionFile); await uploadDocument(sessionId, 'answer-sheet', answerFile); } await processWithStream(sessionId, setProgress); const resultsResponse = await fetch(`/api/session/${sessionId}/results${debug ? '?debug=true' : ''}`); const resultsPayload = await resultsResponse.json() as ProcessingResult & { error?: string }; if (!resultsResponse.ok) throw new Error(resultsPayload.error ?? 'Results are not ready.'); setResult(resultsPayload); setScreen('results'); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Something went wrong.'); } finally { setBusy(false); } };
-  const restart = () => { setResult(undefined); setProgress(emptyProgress); setError(''); setQuestionFile(undefined); setAnswerFile(undefined); setScreen('upload'); };
+  useEffect(() => () => { documentUrls.current.forEach(URL.revokeObjectURL); }, []);
+  const run = async (demo: boolean) => { setBusy(true); setError(''); setProgress(emptyProgress); setScreen('processing'); try { const sessionId = crypto.randomUUID(); if (!demo && (!questionFile || !answerFile)) throw new Error('Choose both files first.'); const processed = await processWithStream(sessionId, setProgress, !demo ? { questionPaper: questionFile!, answerSheet: answerFile! } : undefined, debug); if (!demo) { documentUrls.current.forEach(URL.revokeObjectURL); const questionUrl = URL.createObjectURL(questionFile!); const answerUrl = URL.createObjectURL(answerFile!); documentUrls.current = [questionUrl, answerUrl]; processed.documents.questionPaper.url = questionUrl; processed.documents.answerSheet.url = answerUrl; } setResult(processed); setScreen('results'); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Something went wrong.'); } finally { setBusy(false); } };
+  const restart = () => { documentUrls.current.forEach(URL.revokeObjectURL); documentUrls.current = []; setResult(undefined); setProgress(emptyProgress); setError(''); setQuestionFile(undefined); setAnswerFile(undefined); setScreen('upload'); };
   if (screen === 'processing') return <ProcessingScreen error={error} onBack={() => setScreen('upload')} />;
   if (screen === 'results' && result) return <ResultsScreen result={result} debug={debug} onRestart={restart} onResult={setResult} />;
   return <UploadScreen questionFile={questionFile} answerFile={answerFile} setQuestionFile={setQuestionFile} setAnswerFile={setAnswerFile} onStart={() => void run(false)} busy={busy} error={error} />;
