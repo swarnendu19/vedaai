@@ -7,16 +7,6 @@ import type { AnswerCandidate, Polygon, ProcessingResult, ProgressEvent, Questio
 type Screen = 'upload' | 'processing' | 'results';
 type FileKind = 'question-paper' | 'answer-sheet';
 
-const PROCESSING_STAGES = [
-  [10, 'Preparing documents'],
-  [35, 'Extracting questions'],
-  [45, 'Reading handwriting'],
-  [72, 'Matching answers'],
-  [82, 'Verifying uncertain mappings'],
-  [90, 'Generating feedback'],
-  [96, 'Preparing highlights'],
-] as const;
-
 function Sidebar({ compact = false }: { compact?: boolean }) {
   const menu = [['home.svg', 'Home'], ['classroom.svg', 'My Classroom'], ['assignments.svg', 'Assignments'], ['exams.svg', 'Exams'], ['library.svg', 'My Library']];
   return <aside className={`veda-sidebar ${compact ? 'is-compact' : ''}`}><div><div className="veda-brand"><img src="/assets/logo.svg" alt="VedaAI" />{!compact && <><span>VedaAI</span><img className="collapse-icon" src="/assets/collapse.svg" alt="Collapse" /></>}</div><button className="toolkit"><img src="/assets/teacher-toolkit.svg" alt="" />{!compact && <span>AI Teacher&apos;s Toolkit</span>}</button><nav className="veda-menu">{menu.map(([icon, label], index) => <button key={label} className={index === 3 ? 'active' : ''}><img src={`/assets/${icon}`} alt="" />{!compact && label}</button>)}</nav></div><div className="sidebar-bottom">{!compact && <div className="settings-row"><img src="/assets/settings.svg" alt="" />Settings</div>}<div className="school-card"><img src="/assets/school.png" alt="Delhi Public School" />{!compact && <span><strong>Delhi Public School</strong><small>Mathura Road</small></span>}</div>{compact && <button className="expand-sidebar">›</button>}</div></aside>;
@@ -50,8 +40,8 @@ function UploadScreen({ questionFile, answerFile, setQuestionFile, setAnswerFile
   return <div className="veda-stage upload-stage"><Sidebar /><Topbar /><main className="upload-content"><div className="upload-title"><h1>Upload <span>Question Paper &amp; Answer Sheets</span></h1><p>Upload both files to get started</p></div><TeacherOrb /><div className="upload-tray"><UploadBox kind="question-paper" file={questionFile} onChange={setQuestionFile} onError={setValidation} /><UploadBox kind="answer-sheet" file={answerFile} onChange={setAnswerFile} onError={setValidation} /></div><div className="mapping-action"><button disabled={!ready || busy} onClick={onStart}>{busy ? 'Preparing…' : 'Start Mapping'} <img src="/assets/forward.svg" alt="" /></button><p>Once both files are uploaded, you’ll able to map answers with questions</p>{(validation || error) && <div className="form-error" role="alert">{validation || error}</div>}</div></main></div>;
 }
 
-function ProcessingScreen({ progress, error, onBack }: { progress: ProgressEvent; error: string; onBack: () => void }) {
-  return <div className="veda-stage loading-stage"><Sidebar compact /><Topbar compact /><main className="loading-card"><div className="processing-panel"><div className="loading-sparkles"><i /><i /><i /><i /></div><h1>{error ? 'Needs attention' : progress.label || 'Extracting…'}</h1><p>{error || progress.detail || 'Accuracy-first analysis is running'}</p>{!error && <><div className="progress-track"><span style={{ width: `${progress.percent}%` }} /></div><strong className="progress-value">{progress.percent}%</strong></>}<div className="stage-list">{PROCESSING_STAGES.map(([threshold, label]) => { const done = progress.percent >= threshold; const current = !done && progress.percent >= threshold - 15; return <div key={label} className={done ? 'done' : current ? 'current' : ''}><span>{done ? '✓' : current ? '●' : '○'}</span>{label}</div>; })}</div>{error && <button className="back-upload" onClick={onBack}>Back to uploads</button>}</div></main></div>;
+function ProcessingScreen({ error, onBack }: { error: string; onBack: () => void }) {
+  return <div className="veda-stage loading-stage"><Sidebar compact /><Topbar compact /><main className="loading-card"><div className={`processing-panel ${error ? 'has-error' : ''}`}><img className="loading-sparkles" src="/assets/loading-sparkles.svg" alt="" /><div className="loading-copy"><h1>{error ? 'Needs attention' : 'Extracting...'}</h1><p>{error || 'This may take a while'}</p></div>{error && <button className="back-upload" onClick={onBack}>Back to uploads</button>}</div></main></div>;
 }
 
 function polygonPoints(polygon: Polygon) { return polygon.map((point) => `${point.x},${point.y}`).join(' '); }
@@ -120,11 +110,11 @@ async function processWithStream(sessionId: string, onProgress: (progress: Progr
 const emptyProgress: ProgressEvent = { percent: 0, stage: 'upload_received', label: 'Waiting for files', at: new Date(0).toISOString() };
 
 export default function Home() {
-  const [screen, setScreen] = useState<Screen>('upload'); const [questionFile, setQuestionFile] = useState<File>(); const [answerFile, setAnswerFile] = useState<File>(); const [progress, setProgress] = useState<ProgressEvent>(emptyProgress); const [result, setResult] = useState<ProcessingResult>(); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [screen, setScreen] = useState<Screen>('upload'); const [questionFile, setQuestionFile] = useState<File>(); const [answerFile, setAnswerFile] = useState<File>(); const [, setProgress] = useState<ProgressEvent>(emptyProgress); const [result, setResult] = useState<ProcessingResult>(); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const debug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === 'true';
   const run = async (demo: boolean) => { setBusy(true); setError(''); setProgress(emptyProgress); setScreen('processing'); try { const created = await fetch(`/api/session${demo ? '?demo=true' : ''}`, { method: 'POST' }); const payload = await created.json() as { session?: { id: string }; error?: string }; if (!created.ok || !payload.session) throw new Error(payload.error ?? 'Could not create a processing session.'); const sessionId = payload.session.id; if (!demo) { if (!questionFile || !answerFile) throw new Error('Choose both files first.'); await uploadDocument(sessionId, 'question-paper', questionFile); await uploadDocument(sessionId, 'answer-sheet', answerFile); } await processWithStream(sessionId, setProgress); const resultsResponse = await fetch(`/api/session/${sessionId}/results${debug ? '?debug=true' : ''}`); const resultsPayload = await resultsResponse.json() as ProcessingResult & { error?: string }; if (!resultsResponse.ok) throw new Error(resultsPayload.error ?? 'Results are not ready.'); setResult(resultsPayload); setScreen('results'); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Something went wrong.'); } finally { setBusy(false); } };
   const restart = () => { setResult(undefined); setProgress(emptyProgress); setError(''); setQuestionFile(undefined); setAnswerFile(undefined); setScreen('upload'); };
-  if (screen === 'processing') return <ProcessingScreen progress={progress} error={error} onBack={() => setScreen('upload')} />;
+  if (screen === 'processing') return <ProcessingScreen error={error} onBack={() => setScreen('upload')} />;
   if (screen === 'results' && result) return <ResultsScreen result={result} debug={debug} onRestart={restart} onResult={setResult} />;
   return <UploadScreen questionFile={questionFile} answerFile={answerFile} setQuestionFile={setQuestionFile} setAnswerFile={setAnswerFile} onStart={() => void run(false)} busy={busy} error={error} />;
 }
