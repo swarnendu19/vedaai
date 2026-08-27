@@ -16,7 +16,22 @@ function Topbar({ compact = false }: { compact?: boolean }) {
   return <><header className={`veda-topbar ${compact ? 'compact' : ''}`}><div className="navbar-context"><button type="button" className="navbar-back" aria-label="Go back"><img src="/assets/back.svg" alt="" /></button><div className="exam-context"><img src="/assets/exam-board.svg" alt="" /><span>Exams</span></div></div><div className="navbar-actions"><button type="button" className="navbar-action" aria-label="Help"><img src="/assets/help.svg" alt="" /></button><button type="button" className="navbar-action" aria-label="Notifications"><img src="/assets/notification.svg" alt="" /></button><button type="button" className="navbar-action" aria-label="AI tools"><img src="/assets/star.svg" alt="" /></button><button type="button" className="profile-control" aria-label="Open Madhur Rastogi profile"><img src="/assets/profile.svg" alt="Madhur Rastogi" /></button></div></header><nav className="mobile-navbar" aria-label="Mobile navigation"><div className="mobile-navbar-brand"><button type="button" className="mobile-nav-back" aria-label="Go back"><img src="/assets/back.svg" alt="" /></button><span className="mobile-brand-lockup"><img src="/assets/logo.svg" alt="" /><strong>VedaAI</strong></span></div><div className="mobile-navbar-actions"><button type="button" className="mobile-nav-notification" aria-label="Notifications"><img src="/assets/notification.svg" alt="" /></button><button type="button" className="mobile-nav-profile" aria-label="Open profile"><img src="/assets/mobile-avatar.jpg" alt="Madhur Rastogi" /></button><button type="button" className="mobile-nav-menu" aria-label="Open menu"><span /><span /><span /></button></div></nav></>;
 }
 
-function TeacherOrb() { return <div className="teacher-orb"><img src="/assets/teacher-orb.png" alt="AI teacher" /></div>; }
+function OrbGlyph({ kind }: { kind: 'task' | 'cloud' | 'clock' | 'settings' }) {
+  if (kind === 'task') return <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1.3" /><path d="M4 4h4M4 6h4M4 8h2.3" /></svg>;
+  if (kind === 'cloud') return <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.1 8.4h5.4a1.7 1.7 0 0 0 .2-3.4A2.9 2.9 0 0 0 3.2 4a2.2 2.2 0 0 0-.1 4.4Z" /><path d="m6.3 5.6-1 1.6h1.2l-.8 1.5" /></svg>;
+  if (kind === 'clock') return <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="3.7" /><path d="M6 3.8v2.4l1.6 1" /></svg>;
+  return <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="1.5" /><path d="M6 1.9v1M6 9.1v1M1.9 6h1M9.1 6h1M3.1 3.1l.7.7M8.2 8.2l.7.7M8.9 3.1l-.7.7M3.8 8.2l-.7.7" /></svg>;
+}
+
+function TeacherOrb() {
+  const badges = ['task', 'cloud', 'clock', 'settings'] as const;
+  return <div className="teacher-orb" role="img" aria-label="AI teacher assistant">
+    <span className="teacher-ring teacher-ring-outer" />
+    <span className="teacher-ring teacher-ring-inner" />
+    <span className="teacher-portrait"><img src="/assets/teacher-portrait.png" alt="" /></span>
+    {badges.map((badge) => <span className={`orb-badge orb-badge-${badge}`} key={badge}><OrbGlyph kind={badge} /></span>)}
+  </div>;
+}
 function prettyBytes(bytes: number) { return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`; }
 
 function UploadBox({ kind, file, onChange, onError }: { kind: FileKind; file?: File; onChange: (file?: File) => void; onError: (message: string) => void }) {
@@ -30,14 +45,14 @@ function UploadBox({ kind, file, onChange, onError }: { kind: FileKind; file?: F
   };
   return <div className={`upload-box ${file ? 'filled' : ''}`} role="button" tabIndex={0} onClick={() => input.current?.click()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') input.current?.click(); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); choose(event.dataTransfer.files[0]); }}>
     <input ref={input} hidden type="file" accept="application/pdf,image/png,image/jpeg" onChange={(event) => choose(event.target.files?.[0])} />
-    {file ? <><span className="pdf-icon">{file.type === 'application/pdf' ? 'PDF' : 'IMG'}</span><span className="file-name"><strong>{file.name}</strong><small>{prettyBytes(file.size)} &nbsp; • &nbsp; {file.type === 'application/pdf' ? 'PDF document' : '1 Page'}</small></span><button className="remove" type="button" aria-label={`Remove ${answer ? 'answer sheet' : 'question paper'}`} onClick={(event) => { event.stopPropagation(); onChange(undefined); }}>×</button></> : <><span className="upload-icon"><img src="/assets/upload.svg" alt="" /></span><span className="upload-label">Upload <b>{answer ? 'Answer Sheet' : 'Question Paper'}</b></span><small>Max 10MB</small></>}
+    {file ? <><span className="file-chip"><img className="file-type-icon" src="/assets/document-file.svg" alt="" /><span className="file-name"><strong>{file.name}</strong><small>{prettyBytes(file.size)} &nbsp; • &nbsp; {file.type === 'application/pdf' ? 'PDF document' : '1 Page'}</small></span></span><button className="remove" type="button" aria-label={`Remove ${answer ? 'answer sheet' : 'question paper'}`} onClick={(event) => { event.stopPropagation(); onChange(undefined); }}>×</button></> : <><span className="upload-icon"><img src="/assets/upload.svg" alt="" /></span><span className="upload-label">Upload <b>{answer ? 'Answer Sheet' : 'Question Paper'}</b></span><small>Max 10MB</small></>}
   </div>;
 }
 
 function UploadScreen({ questionFile, answerFile, setQuestionFile, setAnswerFile, onStart, busy, error }: { questionFile?: File; answerFile?: File; setQuestionFile: (file?: File) => void; setAnswerFile: (file?: File) => void; onStart: () => void; busy: boolean; error: string }) {
   const [validation, setValidation] = useState('');
   const ready = Boolean(questionFile && answerFile);
-  return <div className="veda-stage upload-stage"><Sidebar /><Topbar /><main className="upload-content"><div className="upload-title"><h1>Upload <span>Question Paper &amp; Answer Sheets</span></h1><p>Upload both files to get started</p></div><TeacherOrb /><div className="upload-tray"><UploadBox kind="question-paper" file={questionFile} onChange={setQuestionFile} onError={setValidation} /><UploadBox kind="answer-sheet" file={answerFile} onChange={setAnswerFile} onError={setValidation} /></div><div className="mapping-action"><button disabled={!ready || busy} onClick={onStart}>{busy ? 'Preparing…' : 'Start Mapping'} <img src="/assets/forward.svg" alt="" /></button><p>Once both files are uploaded, you’ll able to map answers with questions</p>{(validation || error) && <div className="form-error" role="alert">{validation || error}</div>}</div></main></div>;
+  return <div className="veda-stage upload-stage"><Sidebar /><Topbar /><main className={`upload-content ${ready ? 'files-ready' : ''}`}><div className="upload-title"><h1>{ready ? <>Upload Question Paper<br />&amp; Answer Sheets</> : <>Upload <span>Question Paper &amp; Answer Sheets</span></>}</h1>{!ready && <p>Upload both files to get started</p>}</div><TeacherOrb /><div className="upload-tray"><UploadBox kind="question-paper" file={questionFile} onChange={setQuestionFile} onError={setValidation} /><UploadBox kind="answer-sheet" file={answerFile} onChange={setAnswerFile} onError={setValidation} /></div><div className="mapping-action"><button disabled={!ready || busy} onClick={onStart}>{busy ? 'Preparing…' : 'Start Mapping'} <img src="/assets/forward.svg" alt="" /></button><p>Once both files are uploaded, you’ll able to map answers with questions</p>{(validation || error) && <div className="form-error" role="alert">{validation || error}</div>}</div></main></div>;
 }
 
 function ProcessingScreen({ error, onBack }: { error: string; onBack: () => void }) {
