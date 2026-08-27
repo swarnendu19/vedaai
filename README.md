@@ -1,51 +1,60 @@
 # VedaAI Answer Mapping
 
-Accuracy-first teacher review software built from the supplied Figma. This is a standard Next.js application: it accepts a question paper and handwritten answer sheet, runs observable OCR/mapping stages in Next.js route handlers, and renders normalized OCR polygons as SVG highlights over the original document.
+VedaAI is an accuracy-first teacher review application for mapping scanned question papers to handwritten answer sheets. It accepts PDF, PNG, and JPEG documents, preserves OCR geometry, separates uncertain results from reliable matches, and renders reviewable highlights over the original answer sheet.
 
-## Run locally
+## Technical stack
 
-```bash
-npm run dev
-```
+- Next.js 16 App Router with React 19 and TypeScript
+- Next.js route handlers for uploads, processing, progress events, review, and remapping
+- Mistral OCR as the primary question-paper reader
+- Optional Azure Document Intelligence and Google Cloud Vision OCR providers
+- Optional OpenAI grading after answer mapping is complete
+- PDF.js for browser-side PDF rendering
+- Normalized SVG polygons for document highlights
+- Node.js 22 and pnpm 9.5
 
-Open `http://localhost:3000`. The **audited demo** exercises the complete workflow without API credentials. Real document processing requires at least one OCR provider in `.env.local`; copy `.env.example` and add server-side credentials. No platform-specific hosting runtime is required.
+## Processing pipeline
 
-```bash
-npm test
-npx tsc --noEmit
-npm run lint
-npm run build
-```
+The processing pipeline is implemented as typed, independent services in `lib/veda`. The `/api/session/:id/process` endpoint streams stage updates to the browser using Server-Sent Events while the following work runs:
 
-## Accuracy boundaries
+1. **Upload validation** — validates MIME type and enforces a 10 MB limit for each question paper and answer sheet.
+2. **Document preparation** — stores the original bytes in the temporary session so the review screen can render the exact uploaded document.
+3. **Question-paper OCR** — runs every configured OCR provider. When Mistral returns usable pages, its structured markdown and blocks are used as the primary question source.
+4. **Question extraction** — normalizes common prefixes such as `1.`, `Q1`, `Question 1`, and hierarchical subparts. Parent instructions are kept separate from answerable subquestions.
+5. **Answer-sheet OCR** — reads handwriting and retains page numbers, text confidence, and normalized `0..1` polygons.
+6. **OCR consensus** — chooses the provider with the strongest geometry and adjusts confidence when overlapping providers agree or disagree.
+7. **Answer segmentation** — detects numbered answer anchors, groups continuation lines, and preserves regions spanning multiple pages.
+8. **Candidate scoring** — scores every answer/question pair using explicit numbering, semantic similarity, document order, and OCR confidence.
+9. **Global assignment** — applies a Hungarian maximum-weight assignment so multiple answers cannot be mapped to the same question accidentally.
+10. **Uncertainty handling** — classifies results as `matched`, `uncertain`, `unmatched`, or `unanswered`. Low-confidence writing is never forced into a match.
+11. **Optional grading** — grades only accepted matches and cannot modify the mapping or source coordinates.
+12. **Review preparation** — returns questions, answer candidates, warnings, metrics, original-document URLs, and polygons for the review interface.
 
-- OCR providers determine text and geometry. Reasoning never creates highlight coordinates.
-- Coordinates are normalized to `0..1` and rendered with responsive SVG overlays.
-- Mapping uses explicit numbering, semantic evidence, sequence evidence, OCR confidence, and global one-to-one assignment.
-- `matched`, `unanswered`, `unmatched`, and `uncertain` are distinct outcomes. Low-confidence writing is not forced onto a question.
-- Provider failures degrade confidence and are surfaced in results. If every configured provider fails, processing stops with an actionable error.
-- Grading runs only after mapping and cannot mutate it.
+### Accuracy controls
 
-## Backend stages
+The default pair score is weighted as follows:
 
-The implementation is separated into typed services in `lib/veda`:
+| Signal | Weight |
+| --- | ---: |
+| Explicit question number | 0.40 |
+| Semantic similarity | 0.25 |
+| Secondary semantic evidence | 0.20 |
+| Sequence/order evidence | 0.10 |
+| OCR confidence | 0.05 |
 
-1. document validation and normalization;
-2. provider-specific OCR adapters for Mistral OCR, Azure Document Intelligence Read, and Google Vision;
-3. OCR consensus with geometry preservation;
-4. deterministic question-number and hierarchy extraction;
-5. answer-anchor segmentation and multi-page region grouping;
-6. configurable scoring and Hungarian global assignment;
-7. uncertainty handling and optional OpenAI grading;
-8. result preparation and SVG highlighting.
+The default acceptance threshold is `0.90`; scores from `0.65` to `0.90` require review. Both thresholds can be changed through environment variables. Exact-number matches receive a confidence boost, but still preserve the OCR and semantic evidence used to reach the result.
 
-The processing endpoint streams real stage events over HTTP using the SSE format. Sessions and uploaded bytes are intentionally temporary and held server-side, matching the assignment's no-database requirement; stale sessions expire after two hours.
+### Geometry guarantee
 
-## API
+Highlight coordinates always originate from OCR provider geometry. The application normalizes provider coordinates to the `0..1` range and renders them as responsive SVG polygons over the original document. Grading and semantic scoring cannot generate or alter highlight positions.
+
+## API surface
 
 ```text
+GET   /api/health
 POST  /api/session
 POST  /api/session?demo=true
+GET   /api/session/:id
 POST  /api/session/:id/question-paper
 POST  /api/session/:id/answer-sheet
 POST  /api/session/:id/process
@@ -55,13 +64,70 @@ GET   /api/session/:id/document/:type
 PATCH /api/session/:id/mapping
 ```
 
-Append `?debug=true` to the app and results endpoint to expose mapping confidence, methods, and debug overlay styling.
+Add `?debug=true` to the application URL and results endpoint to expose mapping confidence, mapping methods, and debug overlay styling.
 
-## Provider notes
+## Environment configuration
 
-- Mistral uses the official `/v1/ocr` endpoint with `mistral-ocr-latest`, block geometry, and block confidence.
-- Azure uses the v4.0 `prebuilt-read` model with high-resolution OCR and polls its operation URL.
-- Google uses `DOCUMENT_TEXT_DETECTION` for image uploads. Synchronous Google PDF OCR is deliberately skipped so PDFs can continue through Azure/Mistral rather than failing the pipeline.
-- OpenAI grading uses strict JSON schema output and `store: false`.
+Copy `.env.example` to `.env.local`. At least one OCR provider is required for real uploads; the audited demo works without provider credentials.
 
-Do not commit `.env.local` or provider credentials.
+| Variable | Purpose |
+| --- | --- |
+| `MISTRAL_API_KEY` | Mistral OCR authentication |
+| `MISTRAL_OCR_MODEL` | OCR model, defaults to `mistral-ocr-latest` |
+| `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` | Azure Document Intelligence endpoint |
+| `AZURE_DOCUMENT_INTELLIGENCE_KEY` | Azure Document Intelligence key |
+| `GOOGLE_CLOUD_VISION_API_KEY` | Google Vision OCR for image uploads |
+| `OPENAI_API_KEY` | Enables optional grading after mapping |
+| `OPENAI_GRADING_MODEL` | Grading model identifier |
+| `VEDA_MAPPING_ACCEPT_THRESHOLD` | Automatic match threshold |
+| `VEDA_MAPPING_VERIFY_THRESHOLD` | Teacher-review threshold |
+
+Provider credentials are server-only. Never commit `.env.local` or production secrets.
+
+## Local development
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Open `http://localhost:3000`.
+
+Run the complete verification suite before publishing:
+
+```bash
+pnpm test
+pnpm exec tsc --noEmit
+pnpm lint
+pnpm build
+pnpm start
+```
+
+## Production deployment
+
+The application produces a standalone Next.js server and includes a multi-stage Docker image.
+
+```bash
+docker build -t vedaai .
+docker run --rm -p 3000:3000 --env-file .env.production vedaai
+```
+
+Use `GET /api/health` as the container health check. It reports service health and which providers are configured without exposing credentials.
+
+### Runtime requirement
+
+Uploads, document bytes, results, and progress are intentionally stored in process memory and expire after two hours. Run this version as one long-lived Node.js instance with a single replica and avoid serverless functions that may route consecutive requests to different instances. For horizontal scaling, replace `lib/veda/session-store.ts` with shared session storage and move uploaded documents to object storage before increasing the replica count.
+
+The runtime must allow outbound HTTPS access to every configured OCR or grading provider. Reverse proxies should disable response buffering for the processing endpoint so SSE progress events reach the browser immediately.
+
+## Failure behavior
+
+- One provider may fail while the pipeline continues with successful providers; the failure is returned as a review warning.
+- If every configured OCR provider fails, processing stops with an actionable error.
+- If no supported question numbering is detected, the pipeline stops rather than inventing question structure.
+- Uncertain mappings remain explicitly reviewable and can be manually reassigned through the mapping endpoint.
+- Grading failures do not discard successful OCR or mappings.
+
+## Tests
+
+The current test suite covers question-number normalization, hierarchical subquestion extraction, source-order preservation, and Mistral markdown parsing. Production validation also includes ESLint, TypeScript checking, a standalone Next.js build, and a health-endpoint smoke test.
